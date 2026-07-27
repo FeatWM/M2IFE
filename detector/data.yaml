@@ -1,0 +1,13 @@
+# Update path before detector training. Images and labels follow Ultralytics YOLO format.
+path: data/detector
+train: images/train
+val: images/val
+test: images/test
+
+# The inspected training labels contain detector classes 0, 1 and 2. Their
+# original numeric names are retained for checkpoint and dataset compatibility.
+# The downstream pipeline treats all three classes as patient-region boxes.
+names:
+  0: "0"
+  1: "1"
+  2: "2"

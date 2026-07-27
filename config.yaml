@@ -1,0 +1,76 @@
+project:
+  name: M2-IFE
+  seed: 2025
+  device: cuda:0
+
+detector:
+  weights: weights/detector/best.pt
+  pretrained_model: yolo11x.pt
+  data: detector/data.yaml
+  image_size: 640
+  confidence: 0.25
+  iou: 0.70
+  expected_box_counts: [4, 9]
+  strict_box_count: true
+  order: bottom_to_top_left_to_right
+  train:
+    epochs: 100
+    batch: 16
+    workers: 8
+    project: runs/detector
+    name: train
+    disable_augmentation: true
+
+classifier:
+  labels: [IgG, IgA, IgM, kappa, lambda]
+  trust_legacy_checkpoints: true
+  image_size: 224
+  threshold: 0.30
+  apply_endswith_00_rule: true
+  folds: 5
+  ensemble_weights:
+    vgg16: 1.0
+    resnet18: 1.0
+    convnext_large: 1.0
+  checkpoints:
+    vgg16:
+      - weights/classifier/vgg16/fold0.ckpt
+      - weights/classifier/vgg16/fold1.ckpt
+      - weights/classifier/vgg16/fold2.ckpt
+      - weights/classifier/vgg16/fold3.ckpt
+      - weights/classifier/vgg16/fold4.ckpt
+    resnet18:
+      - weights/classifier/resnet18/fold0.ckpt
+      - weights/classifier/resnet18/fold1.ckpt
+      - weights/classifier/resnet18/fold2.ckpt
+      - weights/classifier/resnet18/fold3.ckpt
+      - weights/classifier/resnet18/fold4.ckpt
+    convnext_large:
+      - weights/classifier/convnext_large/fold0.ckpt
+      - weights/classifier/convnext_large/fold1.ckpt
+      - weights/classifier/convnext_large/fold2.ckpt
+      - weights/classifier/convnext_large/fold3.ckpt
+      - weights/classifier/convnext_large/fold4.ckpt
+  train:
+    image_root: data/classifier/images
+    split_dir: data/classifier/splits
+    output_dir: runs/classifier
+    epochs: 200
+    batch_size: 16
+    workers: 8
+    learning_rate: 0.0001
+    weight_decay: 0.00001
+    patience: 20
+
+patient_metadata:
+  enabled: false
+  excel_path: data/private/patient_metadata.xlsx
+  negative_text: 阴性(-)
+
+expert_comparison:
+  expert_dir: data/private/expert_result
+
+inference:
+  save_crops: true
+  recursive: false
+  output_dir: outputs/inference

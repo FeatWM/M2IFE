@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "m2ife"
+version = "0.1.0"
+description = "Two-stage multi-backbone ensemble framework for multi-label IFE image classification"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.1",
+  "torchvision>=0.16",
+  "ultralytics==8.3.109",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "Pillow>=10.0",
+  "PyYAML>=6.0",
+  "scikit-learn>=1.3",
+  "matplotlib>=3.7",
+  "openpyxl>=3.1",
+  "addict>=2.4",
+]
+
+[tool.setuptools]
+py-modules = ["config_utils", "pipeline", "infer"]
+packages = ["detector", "classifier"]

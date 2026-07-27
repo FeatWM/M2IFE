@@ -1,0 +1,43 @@
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+
+# Local environments and configuration
+.venv/
+venv/
+env/
+config.local.yaml
+
+# Model weights and training logs
+weights/**/*.pt
+weights/**/*.pth
+weights/**/*.ckpt
+weights/**/*.onnx
+runs/
+logs/
+logs_*/
+lightning_logs/
+wandb/
+outputs/
+results/
+
+# Private or patient-level data
+data/private/
+expert_result/
+dataset_csv/
+*.xlsx
+*.xls
+*.bmp
+
+# Original copied workspace retained locally
+yolo/
+_legacy_snapshot/
+detector/inf_new.py
+detector/c_data.py
+classifier/new_infer.py
+
