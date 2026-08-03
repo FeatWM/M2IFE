@@ -3,49 +3,71 @@
 **M²-IFE: A Two-Stage Multi-Backbone Ensemble Framework for Multi-Label
 Classification of Immunofixation Electrophoresis Images**
 
-M²-IFE first detects and orders patient subimages in a complete
-immunofixation-electrophoresis image. It then predicts five labels with a
-three-backbone ensemble.
+M²-IFE supports three independent workflows:
+
+1. train and test the patient-region detector;
+2. train and test the multi-label classifier;
+3. run the complete detector-to-classifier pipeline on full IFE images.
 
 ## Method
 
 ```text
-complete IFE image
-  -> YOLO11x patient-region detector
-  -> bottom-to-top, left-to-right crop ordering
+Full IFE image
+  -> YOLO patient-region detection
+  -> 4 or 9 ordered patient crops
   -> VGG16 / ResNet18 / ConvNeXt-Large classifiers
-  -> five-fold mean inside each backbone
+  -> five-fold mean within each backbone
   -> weighted mean across the three backbones
-  -> IgG, IgA, IgM, kappa and lambda probabilities
-  -> five-bit multilabel prediction and optional nine-class interpretation
+  -> IgG, IgA, IgM, kappa and lambda probabilities for every patient
 ```
 
-The default external ensemble weights are all `1.0`, so the current public
-configuration uses an equal mean across the three backbones. The default
-multilabel threshold is `0.30`. The historical post-processing rule converts a
-prediction ending in `00` to `00000`; it can be disabled in `config.yaml`.
+The detector preserves the historical crop order: rows are processed from
+bottom to top and patients within each row are processed from left to right.
+The default multi-label threshold is `0.30`.
 
 ## Repository layout
 
 ```text
 M2IFE/
-├── detector/                 # stage 1: training, validation, detection and cropping
-├── classifier/               # stage 2: model, training, ensemble, evaluation
-├── infer.py                  # complete two-stage command-line entry point
-├── pipeline.py               # Python API connecting both stages
-├── config.yaml               # portable public configuration
-├── scripts/                  # PowerShell run scripts
+├── detector/
+│   ├── train.py              # detector training entry
+│   ├── test.py               # detector validation/test entry
+│   ├── model.py              # detection and ordered cropping API
+│   ├── box_order.py          # 4/9-box ordering logic
+│   ├── prepare_data.py       # optional LabelMe-to-YOLO conversion
+│   └── data.yaml             # relative detector dataset paths
+├── classifier/
+│   ├── train.py              # 3 backbones x 5 folds training entry
+│   ├── test.py               # single-backbone or fused classifier test entry
+│   ├── model.py              # VGG16, ResNet18 and ConvNeXt-Large models
+│   ├── dataset.py            # multilabel crop dataset
+│   ├── ensemble.py           # fold averaging and backbone fusion
+│   ├── prepare_splits.py     # fixed test set and five-fold split creation
+│   ├── expert_compare.py     # optional expert comparison
+│   └── heatmap.py            # optional fused Grad-CAM
+├── pipeline/
+│   ├── engine.py             # detector-to-classifier Python API
+│   └── infer.py              # complete-image command-line entry
+├── scripts/                  # PowerShell wrappers for all primary workflows
 ├── tests/                    # dependency-light unit tests
-└── weights/README.md         # expected checkpoint layout
+├── weights/README.md         # expected checkpoint layout
+├── config.yaml               # one shared relative-path configuration
+└── requirements.txt
 ```
 
-The original copied scripts and local `yolo/` directory may remain on the
-development machine. `.gitignore` excludes them from the public repository.
+The five primary commands are:
+
+```bash
+python -m detector.train
+python -m detector.test
+python -m classifier.train
+python -m classifier.test
+python -m pipeline.infer --input path/to/full_image_or_directory
+```
 
 ## Installation
 
-Use Python 3.10 or 3.11 for the widest compatibility with PyTorch and
-Ultralytics:
+Python 3.10 or 3.11 is recommended.
 
 ```bash
 python -m venv .venv
@@ -54,102 +76,149 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-The inspected YOLO code is based on Ultralytics 8.3.109, which is pinned in the
-dependency file.
+All dataset, checkpoint and output locations in `config.yaml` are relative to
+the repository root. This repository contains no clinical data or model
+checkpoint.
 
-## Configuration
+## 1. Detector training and testing
 
-`config.yaml` uses relative placeholder paths for datasets, patient workbooks,
-expert results, model weights and generated outputs. No dataset, patient record,
-expert workbook, checkpoint or generated result is included in this repository.
+Expected YOLO dataset layout:
 
-For a private machine-specific setup, copy `config.yaml` to
-`config.local.yaml`, update that copy locally, and pass it with `--config`.
-`config.local.yaml` is excluded from Git.
-
-Before public use, arrange downloadable weights as documented in
-`weights/README.md`.
-
-The existing Lightning checkpoints contain legacy Python metadata. Convert each
-trusted checkpoint before public distribution:
-
-```bash
-python -m classifier.convert_checkpoint --input old.ckpt --output converted.ckpt
+```text
+data/detector/
+├── images/train/
+├── images/val/
+├── images/test/
+├── labels/train/
+├── labels/val/
+└── labels/test/
 ```
 
-After every configured checkpoint has been converted, set
-`classifier.trust_legacy_checkpoints` to `false`.
-
-## Detector
-
-Prepare LabelMe rectangle annotations:
-
-```bash
-python -m detector.prepare_data --input data/labelme --output data/detector/labels/train
-```
-
-Train:
+Train the detector:
 
 ```bash
 python -m detector.train --config config.yaml --device cuda:0
 ```
 
-Evaluate:
+Ultralytics training logs are written under `runs/detector/`. The best
+checkpoint is copied automatically to the detector weight path configured in
+`config.yaml`, which defaults to `weights/detector/best.pt`.
+
+Test on the YOLO test split:
 
 ```bash
-python -m detector.evaluate --config config.yaml --device cuda:0 --split test
+python -m detector.test --config config.yaml --device cuda:0 --split test
 ```
 
-The original detector inference accepted only four or nine boxes. That check is
-preserved through `expected_box_counts` and `strict_box_count`. The inspected
-training labels contain classes `0`, `1`, and `2`; these numeric class names are
-retained in `detector/data.yaml`, while every detected class is passed to the
-same patient-crop classifier.
+To test the validation split:
 
-## Classifier
+```bash
+python -m detector.test --config config.yaml --device cuda:0 --split val
+```
 
-Create a CSV manifest with `image` and `label` columns. `label` is a five-bit
-string ordered as `IgG, IgA, IgM, kappa, lambda`.
+Detector test outputs include Ultralytics detection metrics, plots and
+confusion matrices under `outputs/detector_test/`.
+
+## 2. Classifier training and testing
+
+Each patient crop has a five-bit label in this order:
+
+```text
+IgG, IgA, IgM, kappa, lambda
+```
+
+Example labels include `00000`, `10010`, `01001` and `00110`.
+
+Prepare `data/classifier/manifest.csv` with two columns:
+
+```text
+image,label
+crop_0001.png,00000
+crop_0002.png,10010
+```
 
 Create the fixed test set and five folds:
 
 ```bash
-python -m classifier.prepare_splits ^
-  --manifest data/classifier/manifest.csv ^
+python -m classifier.prepare_splits \
+  --manifest data/classifier/manifest.csv \
   --output data/classifier/splits
 ```
 
-Train every backbone and fold:
+Train all three backbones and all five folds:
 
 ```bash
 python -m classifier.train --config config.yaml --device cuda:0 --backbone all --fold all
 ```
 
-Evaluate the 15-model ensemble:
+Train one backbone or one fold:
 
 ```bash
-python -m classifier.evaluate --config config.yaml --device cuda:0
+python -m classifier.train --config config.yaml --device cuda:0 --backbone vgg16 --fold 0
 ```
 
-The evaluation writes `predictions.csv`, `metrics.json`, per-label ROC figures,
-and a nine-class confusion matrix.
+The best checkpoint from every training run is saved directly to the configured
+`weights/classifier/<backbone>/foldN.ckpt` path. These same paths are used by
+classifier testing and by the complete pipeline.
 
-## Complete inference
-
-One image:
+Test the full three-backbone, fifteen-model ensemble:
 
 ```bash
-python infer.py --config config.yaml --device cuda:0 --input example.bmp
+python -m classifier.test --config config.yaml --device cuda:0 --backbone all
 ```
 
-A directory:
+Test a single five-fold backbone family:
 
 ```bash
-python infer.py --config config.yaml --device cuda:0 --input input_images --recursive
+python -m classifier.test --config config.yaml --device cuda:0 --backbone resnet18
 ```
 
-Outputs include ordered patient crops, `predictions.csv`, and
-`predictions.json`.
+Classifier test outputs include `predictions.csv`, `metrics.json`, per-label
+ROC curves and the nine-class confusion matrix under
+`outputs/classifier_test/`.
+
+## 3. Complete full-image pipeline
+
+Place the detector checkpoint and all fifteen classifier checkpoints according
+to `weights/README.md`, then run:
+
+```bash
+python -m pipeline.infer \
+  --config config.yaml \
+  --device cuda:0 \
+  --input path/to/full_ife_image.bmp
+```
+
+A directory can be processed in one command:
+
+```bash
+python -m pipeline.infer \
+  --config config.yaml \
+  --device cuda:0 \
+  --input path/to/full_image_directory \
+  --recursive
+```
+
+For every full image, the pipeline:
+
+1. detects patient regions;
+2. verifies that the detector returned 4 or 9 boxes;
+3. orders and crops the patient regions;
+4. classifies every crop with the three-backbone ensemble;
+5. writes one result row per patient.
+
+Outputs under `outputs/pipeline/`:
+
+```text
+outputs/pipeline/
+├── crops/<full-image-name>/patient_01.png ...
+├── predictions.csv
+└── predictions.json
+```
+
+Each result contains the source image, patient order, bounding box, detector
+confidence, five probabilities, five-bit multi-label prediction and optional
+nine-class interpretation.
 
 Python API:
 
@@ -158,70 +227,54 @@ from config_utils import load_config
 from pipeline import M2IFEPipeline
 
 config = load_config("config.yaml")
-pipeline = M2IFEPipeline(config)
-rows = pipeline.run("example.bmp", "outputs/inference")
+model = M2IFEPipeline(config)
+rows = model.run("path/to/full_image.bmp", "outputs/pipeline")
 ```
 
-## Optional patient metadata
+## PowerShell scripts
 
-Set `patient_metadata.enabled: true` and configure `excel_path` to associate
-ordered crops with sample IDs and ground-truth labels. The adapter retains the
-original Chinese workbook column conventions. It accepts both the newer
-`样本日期`/`样本号` layout and the earlier `图片名称`/`条码编号` layout; blank image
-cells in the earlier layout are forward-filled within each patient-image group.
+Equivalent Windows wrappers are available:
 
-Patient workbooks and images belong under `data/private/`, which is excluded
-from Git.
-
-## Expert comparison
-
-First create model predictions with `classifier.evaluate` or the complete
-pipeline. Then run:
-
-```bash
-python -m classifier.expert_compare ^
-  --config config.yaml ^
-  --predictions outputs/evaluation/predictions.csv
+```powershell
+.\scripts\train_detector.ps1
+.\scripts\test_detector.ps1
+.\scripts\train_classifiers.ps1
+.\scripts\test_classifier.ps1
+.\scripts\pipeline_infer.ps1 -InputPath path\to\full_image.bmp
 ```
 
-The implementation aligns the historical `P1.xlsx` ... `P10.xlsx` files and
-reports their unmodified predictions. It contains no error-count adjustment.
+## Optional analysis tools
 
-## Grad-CAM
+Expert comparison:
 
 ```bash
-python -m classifier.heatmap ^
-  --config config.yaml ^
-  --input data/deidentified_crops ^
+python -m classifier.expert_compare \
+  --config config.yaml \
+  --predictions outputs/classifier_test/predictions.csv
+```
+
+Fused Grad-CAM:
+
+```bash
+python -m classifier.heatmap \
+  --config config.yaml \
+  --input path/to/deidentified_patient_crops \
   --output outputs/heatmaps
 ```
 
-The script generates one fused heatmap from representative VGG16, ResNet18 and
-ConvNeXt-Large fold models while the prediction probabilities still use the
-full 15-model ensemble.
-
 ## Tests
-
-The lightweight tests cover box ordering, multilabel post-processing and
-patient-label conversion:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-Full detector and classifier smoke tests require PyTorch, torchvision,
-Ultralytics, and the trained weights.
+Full smoke tests require PyTorch, torchvision, Ultralytics and trained
+checkpoints.
 
-## Privacy and release checklist
+## Privacy and release
 
-- Keep patient images, sample IDs, workbooks, split CSVs, expert sheets and
-  generated outputs outside Git.
+- Do not commit patient images, patient identifiers, workbooks, split CSVs,
+  expert sheets, model checkpoints or generated results.
 - Publish only institution-approved, irreversibly de-identified examples.
-- Publish model checkpoints through a release service and include SHA-256
-  checksums.
-- Validate `config.yaml` on a clean machine.
-- Add a repository license after institutional and Ultralytics license review.
-- State clearly that the software is for research use and requires independent
-  clinical validation.
-
-See `THIRD_PARTY_NOTICES.md` for dependency licensing notes.
+- Checkpoint files are ignored by Git and can be distributed separately.
+- Review `THIRD_PARTY_NOTICES.md` before selecting the repository license.

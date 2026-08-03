@@ -23,5 +23,5 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["config_utils", "pipeline", "infer"]
-packages = ["detector", "classifier"]
+py-modules = ["config_utils"]
+packages = ["detector", "classifier", "pipeline"]

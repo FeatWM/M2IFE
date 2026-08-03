@@ -20,6 +20,8 @@ detector:
     project: runs/detector
     name: train
     disable_augmentation: true
+  test:
+    output_dir: outputs/detector_test
 
 classifier:
   labels: [IgG, IgA, IgM, kappa, lambda]
@@ -61,6 +63,8 @@ classifier:
     learning_rate: 0.0001
     weight_decay: 0.00001
     patience: 20
+  test:
+    output_dir: outputs/classifier_test
 
 patient_metadata:
   enabled: false
@@ -70,7 +74,7 @@ patient_metadata:
 expert_comparison:
   expert_dir: data/private/expert_result
 
-inference:
+pipeline:
   save_crops: true
   recursive: false
-  output_dir: outputs/inference
+  output_dir: outputs/pipeline

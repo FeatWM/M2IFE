@@ -69,8 +69,14 @@ def train_one(
     image_root = resolve_path(config, train_cfg["image_root"])
     split_dir = resolve_path(config, train_cfg["split_dir"])
     fold_csv = split_dir / f"fold{fold}.csv"
-    output_dir = resolve_path(config, train_cfg.get("output_dir", "runs/classifier")) / backbone / f"fold{fold}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = resolve_path(config, train_cfg.get("output_dir", "runs/classifier")) / backbone / f"fold{fold}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_paths = classifier_cfg.get("checkpoints", {}).get(backbone, [])
+    if fold >= len(checkpoint_paths):
+        raise ValueError(f"No output checkpoint path configured for {backbone} fold {fold}")
+    best_path = resolve_path(config, checkpoint_paths[fold])
+    best_path.parent.mkdir(parents=True, exist_ok=True)
 
     image_size = int(classifier_cfg.get("image_size", 224))
     train_dataset = IFEFoldDataset(image_root, fold_csv, "train", image_size)
@@ -102,8 +108,6 @@ def train_one(
     best_auc = -float("inf")
     patience_counter = 0
     history = []
-    best_path = output_dir / "best.ckpt"
-
     for epoch in range(1, epochs + 1):
         model.train()
         train_losses = []
@@ -148,8 +152,8 @@ def train_one(
                 print(f"[early stop] no improvement for {patience} epochs")
                 break
 
-    pd.DataFrame(history).to_csv(output_dir / "history.csv", index=False)
-    (output_dir / "training_summary.json").write_text(
+    pd.DataFrame(history).to_csv(run_dir / "history.csv", index=False)
+    (run_dir / "training_summary.json").write_text(
         json.dumps(
             {
                 "backbone": backbone,
@@ -202,4 +206,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

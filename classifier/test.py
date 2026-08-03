@@ -21,24 +21,23 @@ from sklearn.metrics import (
 
 from config_utils import load_config, resolve_path, with_device
 from .ensemble import M2IFEEnsemble
-from .labels import (
-    CLASS_ORDER_9,
-    LABEL_NAMES,
-    bit_array,
-    bits_to_class,
-)
+from .labels import CLASS_ORDER_9, LABEL_NAMES, bit_array, bits_to_class
 
 
 def load_test_rows(split_dir: Path, folds: int, deduplicate: bool = True) -> pd.DataFrame:
     rows = []
     for fold in range(folds):
         path = split_dir / f"fold{fold}.csv"
+        if not path.is_file():
+            raise FileNotFoundError(f"Classifier split file not found: {path}")
         frame = pd.read_csv(path, index_col=0, dtype=str)
         subset = frame[["test", "test_label"]].dropna()
         for image, label in subset.itertuples(index=False, name=None):
             if str(image).strip() and str(label).strip():
                 rows.append({"image": str(image), "ground_truth": str(label), "fold": fold})
     result = pd.DataFrame(rows)
+    if result.empty:
+        raise RuntimeError(f"No classifier test samples found in {split_dir}")
     if deduplicate:
         result = result.drop_duplicates("image", keep="first")
     return result.reset_index(drop=True)
@@ -104,7 +103,7 @@ def save_9class_confusion(predictions: pd.DataFrame, output_dir: Path) -> dict:
     pd.DataFrame(matrix, index=CLASS_ORDER_9, columns=CLASS_ORDER_9).to_csv(
         output_dir / "confusion_matrix_9class.csv"
     )
-    metrics = {
+    return {
         "valid_samples": int(len(valid)),
         "accuracy": float(accuracy_score(valid["ground_truth_class"], valid["prediction_class"])),
         "macro_precision": float(
@@ -135,16 +134,15 @@ def save_9class_confusion(predictions: pd.DataFrame, output_dir: Path) -> dict:
             )
         ),
     }
-    return metrics
 
 
-def evaluate(config: dict, output_dir: Path) -> None:
+def test_classifier(config: dict, output_dir: Path, backbones: tuple[str, ...]) -> None:
     classifier_cfg = config["classifier"]
     train_cfg = classifier_cfg["train"]
     image_root = resolve_path(config, train_cfg["image_root"])
     split_dir = resolve_path(config, train_cfg["split_dir"])
     test_rows = load_test_rows(split_dir, int(classifier_cfg.get("folds", 5)))
-    ensemble = M2IFEEnsemble(config)
+    ensemble = M2IFEEnsemble(config, backbones=backbones)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     prediction_rows = []
@@ -168,12 +166,15 @@ def evaluate(config: dict, output_dir: Path) -> None:
         )
         print(f"[{index + 1}/{len(test_rows)}] {row['image']} -> {result['multilabel']}")
 
+    if not prediction_rows:
+        raise RuntimeError("No classifier images were tested; check image_root and split CSV paths")
     predictions = pd.DataFrame(prediction_rows)
     predictions.to_csv(output_dir / "predictions.csv", index=False)
     y_true = bit_array(predictions["ground_truth"])
     y_pred = bit_array(predictions["prediction"])
     y_prob = predictions[[f"p_{name}" for name in LABEL_NAMES]].to_numpy(dtype=np.float64)
     metrics = compute_metrics(y_true, y_pred, y_prob)
+    metrics["backbones"] = list(backbones)
     metrics["nine_class"] = save_9class_confusion(predictions, output_dir)
     (output_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2),
@@ -184,19 +185,32 @@ def evaluate(config: dict, output_dir: Path) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate the full M2-IFE classifier ensemble.")
+    parser = argparse.ArgumentParser(
+        description="Test one classifier family or the full three-backbone M2-IFE ensemble."
+    )
     parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--output", default="outputs/evaluation")
+    parser.add_argument("--output", default=None)
     parser.add_argument("--device", default=None)
+    parser.add_argument(
+        "--backbone",
+        default="all",
+        choices=("all", "vgg16", "resnet18", "convnext_large"),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = with_device(load_config(args.config), args.device)
-    evaluate(config, resolve_path(config, args.output))
+    backbones = (
+        M2IFEEnsemble.SUPPORTED_BACKBONES
+        if args.backbone == "all"
+        else (args.backbone,)
+    )
+    test_cfg = config["classifier"].get("test", {})
+    output = args.output or test_cfg.get("output_dir", "outputs/classifier_test")
+    test_classifier(config, resolve_path(config, output), backbones)
 
 
 if __name__ == "__main__":
     main()
-

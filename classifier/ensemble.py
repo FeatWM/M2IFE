@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -15,7 +16,13 @@ from .model import MultiLabelClassifier
 
 
 class M2IFEEnsemble:
-    def __init__(self, config: dict[str, Any]):
+    SUPPORTED_BACKBONES = ("vgg16", "resnet18", "convnext_large")
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        backbones: Iterable[str] | None = None,
+    ):
         self.config = config
         classifier_cfg = config["classifier"]
         self.device = torch.device(config.get("project", {}).get("device", "cpu"))
@@ -29,8 +36,15 @@ class M2IFEEnsemble:
         }
         self.families: dict[str, list[MultiLabelClassifier]] = {}
 
+        selected = tuple(backbones or self.SUPPORTED_BACKBONES)
+        unknown = set(selected) - set(self.SUPPORTED_BACKBONES)
+        if unknown:
+            raise ValueError(f"Unsupported classifier backbones: {sorted(unknown)}")
+        if not selected:
+            raise ValueError("At least one classifier backbone must be selected")
+
         checkpoint_config = classifier_cfg.get("checkpoints", {})
-        for backbone in ("vgg16", "resnet18", "convnext_large"):
+        for backbone in selected:
             paths = checkpoint_config.get(backbone, [])
             if not paths:
                 raise ValueError(f"No checkpoints configured for {backbone}")

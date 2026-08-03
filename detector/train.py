@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 
 from config_utils import load_config, resolve_path, with_device
@@ -63,7 +64,15 @@ def main() -> None:
         )
     model.train(**kwargs)
 
+    best_source = Path(str(getattr(model.trainer, "best", "")))
+    best_target = resolve_path(config, detector_cfg["weights"])
+    if best_source.is_file():
+        best_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(best_source, best_target)
+        print(f"[detector] best checkpoint copied to {best_target}")
+    else:
+        print(f"[detector] training finished; best checkpoint reported as {best_source}")
+
 
 if __name__ == "__main__":
     main()
-
